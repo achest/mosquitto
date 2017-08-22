@@ -194,6 +194,7 @@ void mqtt3_config_init(struct mqtt3_config *config)
 	config->default_listener.require_certificate = false;
 	config->default_listener.crlfile = NULL;
 	config->default_listener.use_identity_as_username = false;
+	config->default_listener.identity_is_dn = false;
 #endif
 	config->listeners = NULL;
 	config->listener_count = 0;
@@ -390,6 +391,7 @@ int mqtt3_config_parse_args(struct mqtt3_config *config, int argc, char *argv[])
 			|| config->default_listener.require_certificate
 			|| config->default_listener.crlfile
 			|| config->default_listener.use_identity_as_username
+			|| config->default_listener.identity_is_dn
 #endif
 			|| config->default_listener.use_username_as_clientid
 			|| config->default_listener.host
@@ -439,6 +441,7 @@ int mqtt3_config_parse_args(struct mqtt3_config *config, int argc, char *argv[])
 		config->listeners[config->listener_count-1].ssl_ctx = NULL;
 		config->listeners[config->listener_count-1].crlfile = config->default_listener.crlfile;
 		config->listeners[config->listener_count-1].use_identity_as_username = config->default_listener.use_identity_as_username;
+		config->listeners[config->listener_count-1].identity_is_dn = config->default_listener.identity_is_dn;
 #endif
 	}
 
@@ -1709,6 +1712,13 @@ int _config_read_file_core(struct mqtt3_config *config, bool reload, const char 
 #ifdef WITH_TLS
 					if(reload) continue; // Listeners not valid for reloading.
 					if(_conf_parse_bool(&token, "use_identity_as_username", &cur_listener->use_identity_as_username, saveptr)) return MOSQ_ERR_INVAL;
+#else
+					_mosquitto_log_printf(NULL, MOSQ_LOG_WARNING, "Warning: TLS support not available.");
+#endif
+				}else if(!strcmp(token, "identity_is_dn")){
+#ifdef WITH_TLS
+					if(reload) continue; // Listeners not valid for reloading.
+					if(_conf_parse_bool(&token, "identity_is_dn", &cur_listener->identity_is_dn, saveptr)) return MOSQ_ERR_INVAL;
 #else
 					_mosquitto_log_printf(NULL, MOSQ_LOG_WARNING, "Warning: TLS support not available.");
 #endif

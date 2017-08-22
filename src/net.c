@@ -55,6 +55,10 @@ Contributors:
 #ifdef WITH_TLS
 #include "tls_mosq.h"
 #include <openssl/err.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <time.h>
+#include <unistd.h>
 static int tls_ex_index_context = -1;
 static int tls_ex_index_listener = -1;
 #endif
@@ -199,7 +203,9 @@ int mqtt3_socket_accept(struct mosquitto_db *db, mosq_sock_t listensock)
 #ifdef WITH_TLS
 static int client_certificate_verify(int preverify_ok, X509_STORE_CTX *ctx)
 {
-	/* Preverify should check expiry, revocation. */
+	/* Preverify should check expiry, revocation.
+	 */
+
 	return preverify_ok;
 }
 #endif
@@ -336,6 +342,250 @@ static int _mosquitto_tls_server_ctx(struct _mqtt3_listener *listener)
 }
 #endif
 
+
+#ifdef WITH_TLS
+/* Yeah, the lazy way, just assume that OpenSSL is new enough if it is not, we
+ * are screwed anyways ... */
+#if OPENSSL_VERSION_NUMBER <= 0x00907000L
+#error OpenSSL version is not supported
+#endif
+
+#define CRL_FILE_STAT_TIME (5*60) /* seconds */
+#define MAX_NUM_CRLS 16
+
+struct CRLAutoReloaderData {
+	char        *filename;
+	time_t       last_mtime;
+	time_t       last_stat;
+	X509_CRL    *crls[MAX_NUM_CRLS + 1];
+};
+
+static int crl_autoreloader_new(X509_LOOKUP *ctx)
+{
+	struct CRLAutoReloaderData *data = malloc(sizeof(struct CRLAutoReloaderData));
+	ctx->method_data = (char*) data;
+	if (!data)
+		return 0;
+
+	data->last_mtime = 0;
+	data->last_stat = 0;
+	data->filename = NULL;
+	data->crls[0] = NULL;
+
+	return 1;
+}
+
+static void crl_autoreloader_clear(X509_LOOKUP *ctx)
+{
+	struct CRLAutoReloaderData *data = (struct CRLAutoReloaderData*) ctx->method_data;
+	X509_CRL **crl;
+
+	for (crl = data->crls; *crl; crl++) {
+		X509_CRL_free(*crl);
+		*crl = NULL;
+	}
+}
+
+static void crl_autoreloader_free(X509_LOOKUP *ctx)
+{
+	struct CRLAutoReloaderData *data = (struct CRLAutoReloaderData*) ctx->method_data;
+
+	if (!data)
+		return;
+
+	crl_autoreloader_clear(ctx);
+
+	if (data->filename)
+		free(data->filename);
+
+	free(data);
+}
+
+static int crl_autoreloader_reload(X509_LOOKUP *ctx)
+{
+	struct CRLAutoReloaderData *data = (struct CRLAutoReloaderData*) ctx->method_data;
+	struct timespec now;
+	struct stat buf;
+	int count;
+	BIO *bio;
+	int ret;
+
+	if (!data->filename) {
+		_mosquitto_log_printf(NULL, MOSQ_LOG_ERR, "No CRL file set on lookup handler, cannot load CRL.");
+		return 0;
+	}
+
+	clock_gettime(CLOCK_REALTIME, &now);
+	ret = stat(data->filename, &buf);
+	if (ret) {
+		_mosquitto_log_printf(NULL, MOSQ_LOG_ERR, "Could not stat CRL file %s! Aborting load.", data->filename);
+		return 0;
+	}
+
+	data->last_stat = now.tv_sec;
+	data->last_mtime = buf.st_mtime;
+
+	bio = BIO_new_file(data->filename, "r");
+	if (!bio) {
+		_mosquitto_log_printf(NULL, MOSQ_LOG_ERR, "Could not open CRL file %s! Aborting load.", data->filename);
+		return 0;
+	}
+
+	/* The file was opened successfully. Load all CRLs into memory. */
+	count = 0;
+	while (count < MAX_NUM_CRLS) {
+		X509_CRL *crl;
+		crl = PEM_read_bio_X509_CRL(bio, NULL, NULL, NULL);
+
+		if (!crl)
+			break;
+
+		if (count == 0)
+			crl_autoreloader_clear(ctx);
+
+		data->crls[count] = crl;
+		data->crls[count+1] = NULL;
+		count += 1;
+	}
+
+	_mosquitto_log_printf(NULL, MOSQ_LOG_INFO, "Loaded %i CRL(s) from %s.", count, data->filename);
+
+	BIO_free(bio);
+	return count > 0;
+}
+
+static void crl_autoreloader_check_reload(X509_LOOKUP *ctx)
+{
+	struct CRLAutoReloaderData *data = (struct CRLAutoReloaderData*) ctx->method_data;
+	struct timespec now;
+	struct stat buf;
+	int ret;
+
+	if (!data->filename)
+		return;
+
+	clock_gettime(CLOCK_REALTIME, &now);
+
+	if (now.tv_sec < data->last_stat + CRL_FILE_STAT_TIME)
+		return;
+
+	_mosquitto_log_printf(NULL, MOSQ_LOG_INFO, "Checking whether CRL file %s was modified.", data->filename);
+
+	data->last_stat = now.tv_sec;
+
+	ret = stat(data->filename, &buf);
+	if (ret) {
+		_mosquitto_log_printf(NULL, MOSQ_LOG_ERR, "Could not stat CRL file %s! Will retry at next check time.", data->filename);
+		return;
+	}
+	/* CRL file did not change. */
+	if (buf.st_mtime == data->last_mtime)
+		return;
+
+	crl_autoreloader_reload(ctx);
+}
+
+
+static int crl_autoreloader_get_by_subject(X509_LOOKUP *ctx, int type, X509_NAME *name, X509_OBJECT *ret)
+{
+	struct CRLAutoReloaderData *data = (struct CRLAutoReloaderData*) ctx->method_data;
+	X509_CRL **crl;
+	char *buf;
+
+	ret->type = X509_LU_FAIL;
+	if (type != X509_LU_CRL)
+		return 0;
+
+	crl_autoreloader_check_reload(ctx);
+
+	for (crl = data->crls; *crl; crl++) {
+		if (X509_NAME_cmp((*crl)->crl->issuer, name) == 0) {
+			ret->type = type;
+			ret->data.crl = *crl;
+
+			return 1;
+		}
+	}
+
+	buf = X509_NAME_oneline(name, NULL, 0);
+	free(buf);
+
+
+	return 0;
+}
+
+static int crl_autoreloader_load_file(X509_LOOKUP *ctx, const char *filename)
+{
+	struct CRLAutoReloaderData *data = (struct CRLAutoReloaderData*) ctx->method_data;
+
+	if (data->filename)
+		free(data->filename);
+
+	data->filename = strdup(filename);
+
+	crl_autoreloader_clear(ctx);
+	return crl_autoreloader_reload(ctx);
+}
+
+static int crl_autoreloader_ctrl(X509_LOOKUP *ctx, int cmd, const char *argp, long argl, char **ret)
+{
+	switch (cmd) {
+		case X509_L_FILE_LOAD:
+			return crl_autoreloader_load_file(ctx, argp);
+		default:
+			return 0;
+	}
+
+	return 0;
+}
+
+static X509_LOOKUP_METHOD x509_crl_autoreloader = {
+	"CRL file auto reloader",
+	crl_autoreloader_new,            /* new */
+	crl_autoreloader_free,           /* free */
+	NULL,                        /* init */
+	NULL,                        /* shutdown */
+	crl_autoreloader_ctrl,           /* ctrl */
+	crl_autoreloader_get_by_subject, /* get_by_subject */
+	NULL,                        /* get_by_issuer_serial */
+	NULL,                        /* get_by_fingerprint */
+	NULL                         /* get_by_alias */
+};
+
+static X509_LOOKUP_METHOD *X509_LOOKUP_crl_autoreloader(void)
+{
+	return (&x509_crl_autoreloader);
+}
+
+
+static STACK_OF(X509_CRL) *my_get1_crls_nocache(X509_STORE_CTX *ctx, X509_NAME *nm)
+{
+	int i, idx, cnt;
+	STACK_OF(X509_CRL) *sk;
+	X509_CRL *x;
+	X509_OBJECT xobj;
+	sk = sk_X509_CRL_new_null();
+
+	if (!X509_STORE_get_by_subject(ctx, X509_LU_CRL, nm, &xobj)) {
+		sk_X509_CRL_free(sk);
+		return NULL;
+	}
+
+	x = xobj.data.crl;
+
+	if (!sk_X509_CRL_push(sk, x)) {
+		X509_CRL_free(x);
+		sk_X509_CRL_pop_free(sk, X509_CRL_free);
+		return NULL;
+	}
+
+	return sk;
+}
+
+#endif
+
+
+
 /* Creates a socket and listens on port 'port'.
  * Returns 1 on failure
  * Returns 0 on success.
@@ -462,6 +712,7 @@ int mqtt3_socket_listen(struct _mqtt3_listener *listener)
 				COMPAT_CLOSE(sock);
 				return 1;
 			}
+
 			/* Load CRLs if they exist. */
 			if(listener->crlfile){
 				store = SSL_CTX_get_cert_store(listener->ssl_ctx);
@@ -470,13 +721,14 @@ int mqtt3_socket_listen(struct _mqtt3_listener *listener)
 					COMPAT_CLOSE(sock);
 					return 1;
 				}
-				lookup = X509_STORE_add_lookup(store, X509_LOOKUP_file());
-				rc = X509_load_crl_file(lookup, listener->crlfile, X509_FILETYPE_PEM);
+				lookup = X509_STORE_add_lookup(store, X509_LOOKUP_crl_autoreloader());
+				rc = crl_autoreloader_load_file(lookup, listener->crlfile);
 				if(rc != 1){
 					_mosquitto_log_printf(NULL, MOSQ_LOG_ERR, "Error: Unable to load certificate revocation file \"%s\". Check crlfile.", listener->crlfile);
 					COMPAT_CLOSE(sock);
 					return 1;
 				}
+				store->lookup_crls = my_get1_crls_nocache;
 				X509_STORE_set_flags(store, X509_V_FLAG_CRL_CHECK);
 			}
 

@@ -91,6 +91,7 @@ struct _mqtt3_listener {
 	SSL_CTX *ssl_ctx;
 	char *crlfile;
 	bool use_identity_as_username;
+	bool identity_is_dn;
 	char *tls_version;
 #endif
 #ifdef WITH_WEBSOCKETS
