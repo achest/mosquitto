@@ -136,7 +136,7 @@ struct mqtt3_config {
 	bool queue_qos0_messages;
 	int retry_interval;
 	int sys_interval;
-	bool peform_audit;
+	bool perform_audit;
 	int audit_interval;
 	char *audit_tree_prefix;
 	bool upgrade_outgoing_qos;

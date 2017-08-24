@@ -32,6 +32,7 @@ struct mosquitto_audit *audit_db;
 
 static time_t audit_last_update = 0;
 
+int topic_truncate (const char * strin, int depth,char delimeter, char * strout );
 int mosquitto_initAudit();
 
 int mosquitto_cleanAuditDB();

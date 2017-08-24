@@ -7,6 +7,20 @@
 
 #define BUFLEN 100
 
+int topic_truncate (const char * strin, int depth,char delimeter, char * strout ) {
+
+	int position = 0;
+
+	//search for 4. occurientc or /
+	for (int i = 0; i< depth; i++ ) {
+		while (*(strin + position++) != delimeter && position < strlen(strin) );
+	}
+
+	strncpy(strout, strin, position);
+	strout[position] = '\0';
+    return position;
+}
+
 int mosquitto_initAudit() {
 
 	audit_db = NULL;
@@ -49,7 +63,12 @@ struct mosquitto_audit * mosquitto_getAuditTopic(const char * topic) {
 
 int mosquitto_audit(const char * topic, int len) {
 
-	struct mosquitto_audit * ma = mosquitto_getAuditTopic(topic);
+	char topicTruncated [BUFLEN];
+
+	topic_truncate(topic, 4, '/', topicTruncated);
+
+
+	struct mosquitto_audit * ma = mosquitto_getAuditTopic(topicTruncated);
 
 	if (ma != NULL) {
 
@@ -62,9 +81,9 @@ int mosquitto_audit(const char * topic, int len) {
 			sizeof(struct mosquitto_audit));
 
 	ma->topic = (char *) _mosquitto_calloc(1,
-			sizeof(char*) * (strlen(topic) + 2));
-	snprintf(ma->topic, strlen(topic)+1, "%s", topic);
-	ma->topic[strlen(topic)] = '\0';
+			sizeof(char*) * (strlen(topicTruncated) + 2));
+	snprintf(ma->topic, strlen(topicTruncated)+1, "%s", topicTruncated);
+	ma->topic[strlen(topicTruncated)] = '\0';
 
 	ma->count = 1;
 	ma->payloadlen = len;
