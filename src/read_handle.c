@@ -26,6 +26,7 @@ Contributors:
 #include <read_handle.h>
 #include <send_mosq.h>
 #include <util_mosq.h>
+#include <audit.h>
 
 #ifdef WITH_SYS_TREE
 extern uint64_t g_pub_bytes_received;
@@ -215,6 +216,11 @@ int mqtt3_handle_publish(struct mosquitto_db *db, struct mosquitto *context)
 	}
 
 	_mosquitto_log_printf(NULL, MOSQ_LOG_DEBUG, "Received PUBLISH from %s (d%d, q%d, r%d, m%d, '%s', ... (%ld bytes))", context->id, dup, qos, retain, mid, topic, (long)payloadlen);
+
+	if (db->config->peform_audit) {
+		mosquitto_audit(topic, (long)payloadlen);
+	}
+
 	if(qos > 0){
 		mqtt3_db_message_store_find(context, mid, &stored);
 	}

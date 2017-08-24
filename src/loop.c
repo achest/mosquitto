@@ -46,6 +46,7 @@ Contributors:
 #include <send_mosq.h>
 #include <time_mosq.h>
 #include <util_mosq.h>
+#include <audit.h>
 
 extern bool flag_reload;
 #ifdef WITH_PERSISTENCE
@@ -145,6 +146,9 @@ int mosquitto_main_loop(struct mosquitto_db *db, mosq_sock_t *listensock, int li
 #ifdef WITH_SYS_TREE
 		if(db->config->sys_interval > 0){
 			mqtt3_db_sys_update(db, db->config->sys_interval, start_time);
+		}
+		if(db->config->perform_audit &&  db->config->audit_interval > 0){
+			mosquitto_sendAuditData(db,db->config->audit_tree_prefix , db->config->audit_interval, start_time);
 		}
 #endif
 

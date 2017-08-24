@@ -156,6 +156,9 @@ static void _config_init_reload(struct mqtt3_config *config)
 	config->queue_qos0_messages = false;
 	config->retry_interval = 20;
 	config->sys_interval = 10;
+	config->peform_audit = false;
+	config->audit_interval = 20;
+	config->audit_tree_prefix = NULL;
 	config->upgrade_outgoing_qos = false;
 	if(config->auth_options){
 		for(i=0; i<config->auth_option_count; i++){
@@ -227,6 +230,7 @@ void mqtt3_config_cleanup(struct mqtt3_config *config)
 	if(config->persistence_filepath) _mosquitto_free(config->persistence_filepath);
 	if(config->psk_file) _mosquitto_free(config->psk_file);
 	if(config->pid_file) _mosquitto_free(config->pid_file);
+	if(config->audit_tree_prefix) _mosquitto_free(config->audit_tree_prefix);
 	if(config->listeners){
 		for(i=0; i<config->listener_count; i++){
 			if(config->listeners[i].host) _mosquitto_free(config->listeners[i].host);
@@ -1525,7 +1529,26 @@ int _config_read_file_core(struct mqtt3_config *config, bool reload, const char 
 						_mosquitto_log_printf(NULL, MOSQ_LOG_ERR, "Error: Invalid sys_interval value (%d).", config->sys_interval);
 						return MOSQ_ERR_INVAL;
 					}
-				}else if(!strcmp(token, "threshold")){
+				}else if(!strcmp(token, "peform_audit")){
+					if(_conf_parse_bool(&token, "peform_audit", &config->peform_audit, saveptr)) return MOSQ_ERR_INVAL;
+
+				}
+
+				else if(!strcmp(token, "audit_tree_prefix")){
+						if(reload){
+							if(config->audit_tree_prefix){
+								_mosquitto_free(config->audit_tree_prefix);
+								config->audit_tree_prefix = NULL;
+							}
+						}
+						if(_conf_parse_string(&token, "audit_tree_prefix", &config->audit_tree_prefix, saveptr)) return MOSQ_ERR_INVAL;
+				}else if(!strcmp(token, "audit_interval")){
+					if(_conf_parse_int(&token, "audit_interval", &config->audit_interval, saveptr)) return MOSQ_ERR_INVAL;
+					if(config->audit_interval < 0 || config->audit_interval > 65535){
+						_mosquitto_log_printf(NULL, MOSQ_LOG_ERR, "Error: Invalid audit_interval value (%d).", config->sys_interval);
+						return MOSQ_ERR_INVAL;
+										}
+				     }else if(!strcmp(token, "threshold")){
 #ifdef WITH_BRIDGE
 					if(reload) continue; // FIXME
 					if(!cur_bridge){
