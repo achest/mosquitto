@@ -218,7 +218,7 @@ int mqtt3_handle_publish(struct mosquitto_db *db, struct mosquitto *context)
 	_mosquitto_log_printf(NULL, MOSQ_LOG_DEBUG, "Received PUBLISH from %s (d%d, q%d, r%d, m%d, '%s', ... (%ld bytes))", context->id, dup, qos, retain, mid, topic, (long)payloadlen);
 
 	if (db->config->perform_audit) {
-		mosquitto_audit(topic, (long)payloadlen);
+		mosquitto_audit(topic, (long)payloadlen, db->config->audit_topic_depth);
 	}
 
 	if(qos > 0){

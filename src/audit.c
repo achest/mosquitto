@@ -61,11 +61,11 @@ struct mosquitto_audit * mosquitto_getAuditTopic(const char * topic) {
 	return NULL;
 }
 
-int mosquitto_audit(const char * topic, int len) {
+int mosquitto_audit(const char * topic, int len, int topicdepth) {
 
 	char topicTruncated [BUFLEN];
 
-	topic_truncate(topic, 4, '/', topicTruncated);
+	topic_truncate(topic, topicdepth, '/', topicTruncated);
 
 
 	struct mosquitto_audit * ma = mosquitto_getAuditTopic(topicTruncated);

@@ -39,7 +39,7 @@ int mosquitto_cleanAuditDB();
 
 
 
-int mosquitto_audit(const char * topic, int len);
+int mosquitto_audit(const char * topic, int len, int topicdepth);
 
 struct mosquitto_audit * mosquitto_getAuditTopic(const char * topic);
 

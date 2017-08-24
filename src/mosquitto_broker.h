@@ -138,6 +138,7 @@ struct mqtt3_config {
 	int sys_interval;
 	bool perform_audit;
 	int audit_interval;
+	int audit_topic_depth;
 	char *audit_tree_prefix;
 	bool upgrade_outgoing_qos;
 	char *user;

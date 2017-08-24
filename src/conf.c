@@ -158,6 +158,7 @@ static void _config_init_reload(struct mqtt3_config *config)
 	config->sys_interval = 10;
 	config->perform_audit = false;
 	config->audit_interval = 20;
+	config->audit_topic_depth = 4;
 	config->audit_tree_prefix = NULL;
 	config->upgrade_outgoing_qos = false;
 	if(config->auth_options){
@@ -1547,7 +1548,13 @@ int _config_read_file_core(struct mqtt3_config *config, bool reload, const char 
 					if(config->audit_interval < 0 || config->audit_interval > 65535){
 						_mosquitto_log_printf(NULL, MOSQ_LOG_ERR, "Error: Invalid audit_interval value (%d).", config->sys_interval);
 						return MOSQ_ERR_INVAL;
-										}
+					}
+				}else if(!strcmp(token, "audit_topic_depth")){
+					if(_conf_parse_int(&token, "audit_topic_depth", &config->audit_topic_depth, saveptr)) return MOSQ_ERR_INVAL;
+									if(config->audit_topic_depth < 1 || config->audit_topic_depth > 65535){
+										_mosquitto_log_printf(NULL, MOSQ_LOG_ERR, "Error: Invalid audit_interval value (%d).", config->sys_interval);
+										return MOSQ_ERR_INVAL;
+														}
 				     }else if(!strcmp(token, "threshold")){
 #ifdef WITH_BRIDGE
 					if(reload) continue; // FIXME
